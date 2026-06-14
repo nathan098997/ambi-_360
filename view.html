@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tour Virtual 360° - AMBI360</title>
+    <link rel="stylesheet" href="https://cdn.pannellum.org/2.5/pannellum.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: white;
+            overflow: hidden;
+        }
+        
+        .viewer-container {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .viewer-header {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(10px);
+            z-index: 100;
+        }
+        
+        .viewer-title-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .project-logo {
+            max-height: 40px;
+            max-width: 120px;
+            object-fit: contain;
+            border-radius: 4px;
+        }
+        
+        .viewer-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: white;
+        }
+        
+        .viewer-controls {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .control-btn {
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        #panorama {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+        }
+        
+        .loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #0f172a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            z-index: 1000;
+        }
+        
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top: 3px solid #3eb3df;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 16px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error-message {
+            text-align: center;
+            padding: 40px;
+            color: #ef4444;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading" class="loading">
+        <div class="loading-spinner"></div>
+        <p>Carregando tour virtual...</p>
+    </div>
+    
+    <div id="viewer" class="viewer-container" style="display: none;">
+        <header class="viewer-header">
+            <div class="viewer-title-container">
+                <img id="projectLogo" class="project-logo" src="" alt="Logo" style="display: none;">
+                <h1 class="viewer-title" id="projectTitle">Tour Virtual 360°</h1>
+            </div>
+            <div class="viewer-controls">
+                <button class="control-btn" onclick="toggleFullscreen()">⛶ Tela Cheia</button>
+                <button class="control-btn" onclick="showInfo()">ℹ️ Info</button>
+            </div>
+        </header>
+        <div id="panorama"></div>
+    </div>
+    
+    <div id="error" class="error-message" style="display: none;">
+        <h2>Erro ao carregar o tour</h2>
+        <p>Não foi possível carregar os dados do tour virtual.</p>
+    </div>
+
+    <script src="https://cdn.pannellum.org/2.5/pannellum.js"></script>
+    <script>
+        let viewer = null;
+        let projectData = null;
+        
+        // Carregar dados do tour da URL
+        function loadTourData() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const data = urlParams.get('d');
+            
+            if (!data) {
+                showError('Dados do tour não encontrados na URL.');
+                return;
+            }
+            
+            try {
+                const decompressed = atob(data);
+                const rawData = JSON.parse(decompressed);
+                
+                // Converter formato minificado para formato completo
+                projectData = {
+                    title: rawData.t || 'Tour Virtual 360°',
+                    image: rawData.i,
+                    logo: rawData.l,
+                    hotspots: (rawData.h || []).map(h => ({
+                        id: h.id,
+                        pitch: h.p,
+                        yaw: h.y,
+                        text: h.t,
+                        targetImage: h.i,
+                        parentId: h.pid,
+                        type: h.tp,
+                        typeImage: h.ti
+                    }))
+                };
+                
+                if (!projectData.image) {
+                    throw new Error('Dados inválidos');
+                }
+                
+                initializeViewer();
+            } catch (e) {
+                console.error('Erro ao decodificar dados:', e);
+                showError('Erro ao decodificar os dados do tour.');
+            }
+        }
+        
+        function initializeViewer() {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('viewer').style.display = 'flex';
+            
+            // Configurar título e logo
+            document.getElementById('projectTitle').textContent = projectData.title || 'Tour Virtual 360°';
+            
+            if (projectData.logo) {
+                const logo = document.getElementById('projectLogo');
+                logo.src = projectData.logo;
+                logo.style.display = 'block';
+            }
+            
+            // Inicializar viewer
+            try {
+                if (projectData.hotspots && projectData.hotspots.length > 0) {
+                    const scenes = createScenesConfig(projectData.image, projectData.hotspots);
+                    viewer = pannellum.viewer('panorama', {
+                        default: {
+                            firstScene: 'main',
+                            autoLoad: true,
+                            autoRotate: -2,
+                            compass: true,
+                            showZoomCtrl: true,
+                            showFullscreenCtrl: false,
+                            yaw: 0
+                        },
+                        scenes: scenes
+                    });
+                } else {
+                    viewer = pannellum.viewer('panorama', {
+                        type: 'equirectangular',
+                        panorama: projectData.image,
+                        autoLoad: true,
+                        autoRotate: -2,
+                        compass: true,
+                        showZoomCtrl: true,
+                        showFullscreenCtrl: false,
+                        yaw: 0
+                    });
+                }
+            } catch (e) {
+                console.error('Erro ao inicializar viewer:', e);
+                showError('Erro ao carregar o panorama.');
+            }
+        }
+        
+        function createScenesConfig(mainImage, hotspotsArray) {
+            const scenes = { 
+                main: { 
+                    type: 'equirectangular', 
+                    panorama: mainImage, 
+                    hotSpots: [],
+                    yaw: 0
+                } 
+            };
+            
+            // Filtrar pontos ROOT para cena principal
+            const rootHotspots = (hotspotsArray || []).filter(h => h.parentId === null || h.parentId === undefined);
+            
+            rootHotspots.forEach(hotspot => {
+                if (hotspot.targetImage) {
+                    scenes.main.hotSpots.push({
+                        id: hotspot.id,
+                        pitch: hotspot.pitch,
+                        yaw: hotspot.yaw,
+                        type: 'scene',
+                        text: hotspot.text,
+                        sceneId: 'scene_' + hotspot.id,
+                        cssClass: getHotspotClass(hotspot.type, hotspot.typeImage)
+                    });
+                }
+            });
+            
+            // Criar cenas para todos os hotspots
+            const allHotspots = (hotspotsArray || []);
+            allHotspots.forEach((hotspot) => {
+                if (hotspot.targetImage) {
+                    const sceneId = 'scene_' + hotspot.id;
+                    const hotSpots = [];
+                    
+                    const parentScene = hotspot.parentId ? 'scene_' + hotspot.parentId : 'main';
+                    
+                    hotSpots.push({
+                        id: `back_${sceneId}`,
+                        pitch: -10,
+                        yaw: 180,
+                        type: 'scene',
+                        text: 'Voltar',
+                        sceneId: parentScene,
+                        cssClass: 'hotspot-back'
+                    });
+                    
+                    const childHotspots = allHotspots.filter(child => child.parentId === hotspot.id);
+                    childHotspots.forEach(child => {
+                        if (child.targetImage) {
+                            hotSpots.push({
+                                id: child.id,
+                                pitch: child.pitch,
+                                yaw: child.yaw,
+                                type: 'scene',
+                                text: child.text,
+                                sceneId: 'scene_' + child.id,
+                                cssClass: getHotspotClass(child.type, child.typeImage)
+                            });
+                        }
+                    });
+                    
+                    scenes[sceneId] = {
+                        type: 'equirectangular',
+                        panorama: hotspot.targetImage,
+                        hotSpots: hotSpots
+                    };
+                }
+            });
+            
+            return scenes;
+        }
+        
+        function getHotspotClass(type, typeImage) {
+            if (type === 'door') {
+                return typeImage === 'porta 2.png' ? 'hotspot-door porta-2' : 'hotspot-door porta-1';
+            } else {
+                return typeImage === 'normal 2.png' ? 'hotspot-nav normal-2' : 'hotspot-nav normal-1';
+            }
+        }
+        
+        function showError(message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('viewer').style.display = 'none';
+            document.getElementById('error').style.display = 'block';
+            document.querySelector('#error p').textContent = message;
+        }
+        
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+        
+        function showInfo() {
+            alert(`Tour Virtual: ${projectData?.title || 'Sem título'}\\n\\nCriado com AMBI360\\nPlataforma de tours virtuais 360°`);
+        }
+        
+        // Inicializar quando a página carregar
+        document.addEventListener('DOMContentLoaded', loadTourData);
+    </script>
+</body>
+</html>
